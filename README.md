@@ -10,6 +10,7 @@ Implementation of a MySQL storage engine in ver 8.0.27 for macos11 on x86_64<br>
 7. ```sudo mv ./plugin_output_directory/ha_nakamori.so /usr/local/mysql/lib/plugin``` in mysql-work directory<br>
 8. ```mysql -u root -p```<br>
 9. ```install plugin nakamori soname 'ha_nakamori.so'```<br>
+##### If MySQL ommits errors related to binary log format when you send queries, try running ```SET SESSION binlog_format = 'STATEMENT';```
 
 ## Reference
 mysql/mysql-server<br>
