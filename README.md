@@ -3,12 +3,13 @@ Implementation of a MySQL storage engine in ver 8.0.27 for macos11 on x86_64<br>
 ## How to add a storage engine to your MySQL<br>
 1. clone the mysql source tree from mysql-server github page(reference 1)<br>
 2. ```cmake #InsertPathHere#/mysql-server``` (adjust "#InsertPathHere#", this cmake has to be done outside of mysql-server directory, I am using a directory named mysql-work; reference 11)<br>
-3. create nakamori directory in mysql-work/storage<br>
-4. create ha_nakamori.cc　and ha_nakamori.h based on example storage engine in nakamori directory<br>
-5. ```make nakamori``` in mysql-work directory
-6. ```sudo mv ./plugin_output_directory/ha_nakamori.so /usr/local/mysql/lib/plugin``` in mysql-work directory<br>
-7. ```mysql -u root -p```<br>
-8. ```install plugin nakamori soname 'ha_nakamori.so'```<br>
+3. ```cd mysql-work/storage```<br>
+4. ```cp -r example nakamori```<br>
+5. rename the files (e.g. ha_example.cc to ha_nakamori.cc) and replace 'EXAMPLE' and 'example' to 'NAKAMORI' and 'nakamori' in the files (including CMakeLists.txt)<br>
+6. ```make nakamori``` in mysql-work directory
+7. ```sudo mv ./plugin_output_directory/ha_nakamori.so /usr/local/mysql/lib/plugin``` in mysql-work directory<br>
+8. ```mysql -u root -p```<br>
+9. ```install plugin nakamori soname 'ha_nakamori.so'```<br>
 
 ## Reference
 mysql/mysql-server<br>
