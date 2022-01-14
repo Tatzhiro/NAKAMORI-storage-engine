@@ -99,6 +99,8 @@
 // #include "sql/sql_class.h"
 // #include "sql/sql_plugin.h"
 // #include "typelib.h"
+// #include "sql/table.h"
+// #include "sql/field.h"
 
 // static handler *nakamori_create_handler(handlerton *hton, TABLE_SHARE *table,
 //                                        bool partitioned, MEM_ROOT *mem_root);
@@ -112,8 +114,6 @@
 
 // Nakamori_share::Nakamori_share() { thr_lock_init(&lock); }
 
-// // static const char *ha_nakamori_exts[] = {".CSV", ".CSM", NullS};
-
 // static int nakamori_init_func(void *p) {
 //   DBUG_TRACE;
 
@@ -123,10 +123,14 @@
 //   nakamori_hton->flags = HTON_CAN_RECREATE;
 //   nakamori_hton->is_supported_system_table = nakamori_is_supported_system_table;
 //   nakamori_hton->db_type = DB_TYPE_UNKNOWN;
-//   // nakamori_hton->file_extensions = ha_nakamori_exts;
 
 //   return 0;
 // }
+
+// static const char *ha_nakamori_exts[] = {
+//   ".CSV",
+//   NullS
+// };
 
 // /**
 //   @brief
@@ -136,35 +140,21 @@
 //   they are needed to function.
 // */
 
-// Nakamori_share *ha_nakamori::get_share(const char *table_name) {
-// //   Nakamori_share *tmp_share;
-
-// //   DBUG_TRACE;
-
-// //   lock_shared_ha_data();
-// //   if (!(tmp_share = static_cast<Nakamori_share *>(get_ha_share_ptr()))) {
-// //     tmp_share = new Nakamori_share;
-// //     if (!tmp_share) goto err;
-// //     tmp_share->data_file_name = table_name;
-// //     set_ha_share_ptr(static_cast<Handler_share *>(tmp_share));
-// //   }
-// // err:
-// //   unlock_shared_ha_data();
-// //   return tmp_share;
+// Nakamori_share *ha_nakamori::get_share() {
 //   Nakamori_share *tmp_share;
 
-//   DBUG_ENTER("ha_hoge::get_share()");
+//   DBUG_TRACE;
 
-//   lock_shared_ha_data();　　// Hoge_share のロック
-//   if (!(tmp_share = static_cast<Nakamori_share *>(get_ha_share_ptr()))) {　　// 既に Hoge_share インスタンスが存在すればそれを取得
-//     tmp_share = new Nakamori_share;　　// インスタンスがなければ新規生成
-//     tmp_share->data_file_name = table_name;
-//     tmp_share->write_opened = false;
-//     set_ha_share_ptr(static_cast<Handler_share *>(tmp_share));　　// 生成したインスタンスをシングルトンとして登録
+//   lock_shared_ha_data();
+//   if (!(tmp_share = static_cast<Nakamori_share *>(get_ha_share_ptr()))) {
+//     tmp_share = new Nakamori_share;
+//     if (!tmp_share) goto err;
+
+//     set_ha_share_ptr(static_cast<Handler_share *>(tmp_share));
 //   }
-//   unlock_shared_ha_data();　　// Hoge_share へのロックの解放
-  
-//   DBUG_RETURN(tmp_share);
+// err:
+//   unlock_shared_ha_data();
+//   return tmp_share;
 // }
 
 // static handler *nakamori_create_handler(handlerton *hton, TABLE_SHARE *table,
@@ -173,7 +163,11 @@
 // }
 
 // ha_nakamori::ha_nakamori(handlerton *hton, TABLE_SHARE *table_arg)
-//     : handler(hton, table_arg) {}
+//     : handler(hton, table_arg),
+//       current_position(0)
+//     {
+//       //buffer.set((char *)byte_buffer, IO_SIZE, &my_charset_bin);
+//     }
 
 // /*
 //   List of all system tables specific to the SE.
@@ -234,27 +228,17 @@
 // */
 
 // int ha_nakamori::open(const char *name, int, uint, const dd::Table *) {
-//   // DBUG_TRACE;
+//   DBUG_TRACE;
+//   if (!(share = get_share())) return 1;
+//   thr_lock_data_init(&share->lock, &lock, nullptr);
 
-//   // if (!(share = get_share(name))) return 1;
-//   // thr_lock_data_init(&share->lock, &lock, nullptr);
-
-//   // if ((data_file = my_open(share->data_file_name, O_RDWR, MYF(0))) == -1) {
-//   //   return my_errno() ? my_errno() : -1;
-//   // }  
-
-//   // return 0;
-//   DBUG_ENTER("ha_hoge::open");
-
-//   if (!(share = get_share(name))) DBUG_RETURN(1);　　// Hoge_share の取得
-//   thr_lock_data_init(&share->lock, &lock, NULL);　　// ロックオブジェクトの初期化
-
-//   if ((data_file = my_open(share->data_file_name, O_RDONLY, MYF(0))) == -1){　　// ファイルのオープン
+//   fn_format(data_file_name, name, "", ha_nakamori_exts[0],
+//               MY_REPLACE_EXT | MY_UNPACK_FILENAME);
+//   if( (data_file = my_open(data_file_name, O_RDONLY, MYF(MY_WME))) == -1) {
 //     close();
-//     DBUG_RETURN(-1);
-//   };
-
-//   DBUG_RETURN(0);
+//     return -1;
+//   }
+//   return 0;
 // }
 
 // /**
@@ -274,6 +258,7 @@
 
 // int ha_nakamori::close(void) {
 //   DBUG_TRACE;
+//   // my_free(share);
 //   return 0;
 // }
 
@@ -307,6 +292,36 @@
 //   sql_insert.cc, sql_select.cc, sql_table.cc, sql_udf.cc and sql_update.cc
 // */
 
+// int ha_nakamori::encode_query()
+// {
+//   char attribute_buffer[1024];
+//   String attribute(attribute_buffer, sizeof(attribute_buffer), &my_charset_bin);
+
+//   my_bitmap_map *org_bitmap = tmp_use_all_columns(table, table->read_set);// カラム情報の読み取りフラグを立てる
+//   buffer.length(0);  // buffer を初期化
+
+//   for (Field **field = table->field; *field; field++) {
+//     const char *p;
+//     const char *end;
+
+//     (*field)->val_str(&attribute, &attribute);// クエリ文字列の実際の長さを attribute に格納
+//     p = attribute.ptr();// 書き込む文字列の先頭にポインタをセット
+//     end = attribute.length() + p;// 書き込む文字列の終端にポインタをセット
+
+//     //buffer.append('"');
+//     for (; p < end; p++)
+//       buffer.append(*p);
+//     //buffer.append('"');
+//     buffer.append(',');
+//   }
+
+//   buffer.length(buffer.length() - 1);
+//   buffer.append('\n');
+
+//   tmp_restore_column_map(table->read_set, org_bitmap);// 読み取りフラグを寝かせる
+//   return (buffer.length());
+// }
+
 // int ha_nakamori::write_row(uchar *) {
 //   DBUG_TRACE;
 //   /*
@@ -315,6 +330,16 @@
 //     probably need to do something with 'buf'. We report a success
 //     here, to pretend that the insert was successful.
 //   */
+//   ha_statistic_increment(&System_status_var::ha_write_count);
+
+//   if( (write_file = my_open(data_file_name, O_RDWR | O_APPEND, MYF(MY_WME))) == -1) {
+//     close();
+//     return -1;
+//   }
+//   int size = encode_query();
+//   if ((my_write(write_file, pointer_cast<const uchar *> (buffer.ptr()), size, MYF(0))) < 0)// データファイルへの書き込み
+//     DBUG_RETURN(-1);  
+//   stats.records++;
 //   return 0;
 // }
 
@@ -341,8 +366,155 @@
 //   @see
 //   sql_select.cc, sql_acl.cc, sql_update.cc and sql_insert.cc
 // */
-// int ha_nakamori::update_row(const uchar *, uchar *) {
+// #ifdef DEBUG_ON
+// bool ha_nakamori::my_nl_strcmp(const char *s1, const char *s2){
+//   char x, y;
+//   while (true)
+//   {
+//     x = *s1;
+//     y = *s2;
+//     if(x == '\n' && y == '\n')
+//       return true;
+//     if (x == y){
+//       s1++;
+//       s2++;
+//     }
+//     else
+//       return false;
+//   }
+// }
+// #endif
+// bool ha_nakamori::primary_key_strcmp(const char *s1, const char *s2){
+//   char x, y;
+//   while (true)
+//   {
+//     x = *s1;
+//     y = *s2;
+//     if(x == ',' || y == ',')
+//       return true;
+//     if (x == y){
+//       s1++;
+//       s2++;
+//     }
+//     else
+//       return false;
+//   }
+// }
+
+// // #ifdef INPLACE_UPDATE
+// // int ha_nakamori::update_inplace(const uchar *, uchar *) {
+// //   DBUG_TRACE;
+// //   int line = 0;  // 行数
+// //   bool update_is_successful = false;
+// //   FILE *f;
+
+// //   line = read_table();
+
+// //   f = fopen(data_file_name, "w");
+// //   if(f == NULL)
+// //   {
+// //     printf("load error");
+// //     return -1;
+// //   }
+
+// //   encode_query();
+// //   buffer.append('\0');
+// //   // ファイル書き込み
+// //   for(int i = 0; i < line; i++)
+// //   {
+// //     if(primary_key_strcmp(arr[i],(char*)(buffer.ptr())) == false)
+// //     {
+// //       fputs(arr[i], f);
+// //     }
+// //     else
+// //     {
+// //       fputs((char*)(buffer.ptr()), f);
+// //       update_is_successful = true;
+// //     }
+// //   }
+  
+// //   // ファイル閉じる
+// //   fclose(f);
+// //   if(!update_is_successful){
+// //     return -1;
+// //   }
+// //   return 0;
+// // }
+// // #endif
+
+// int ha_nakamori::update_row(const uchar *, uchar *new_data) {
 //   DBUG_TRACE;
+//   int line = 0;  // 行数
+//   bool update_is_successful = false;
+//   char arr[100][50];
+//   FILE *f;
+
+//   f = fopen(data_file_name, "r");
+//   if(f == NULL)
+//   {
+//     printf("load error");
+//     return -1;
+//   }
+
+//   for(int i = 0; i < (int)sizeof(arr)/(int)sizeof(arr[0]) && fgets(arr[i], sizeof(arr[i]), f); i++)
+//   {
+//     line++;  // テキストファイルの行数
+//   }
+//   fclose(f);
+
+//   f = fopen(data_file_name, "w");
+//   if(f == NULL)
+//   {
+//     printf("load error");
+//     return -1;
+//   }
+
+//   // encode_query();
+//   encode_to_vector();
+//   // buffer.append('\0');
+//   // ファイル書き込み
+// #ifdef DEBUG_ON
+//   FILE *fp;
+//   fp = fopen("update.txt", "w");
+//   if(fp == NULL)
+//   {
+//     printf("load error");
+//     return -1;
+//   }
+//   // ファイル書き込み
+//   vec.push_back('\0');
+//   fprintf(fp, "buffer = %s", (char*)&vec[0]);
+//   for(int i = 0; i < line; i++)
+//     fputs(arr[i], fp);
+//   fputs("update debug end\n", fp);
+//   fclose(fp);
+// #endif
+//   for(int i = 0; i < line; i++)
+//   {
+//     if(primary_key_strcmp(arr[i],(char*)(&vec[0])) == false)
+//     {
+//       fputs(arr[i], f);
+//     }
+//     else
+//     {
+// #ifdef INPLACE_UPDATE 
+//       // fputs((char*)(&vec[0]), f);
+//       fprintf(f, "%s", (char*)(&vec[0]));
+// #endif
+//       update_is_successful = true;
+//     }
+//   }
+  
+//   // ファイル閉じる
+//   fclose(f);
+//   if(!update_is_successful){
+//     return -1;
+//   }
+// #ifndef INPLACE_UPDATE
+//   if(write_row(new_data) != 0)
+//     return 1;
+// #endif
+//   return 0;
 //   return HA_ERR_WRONG_COMMAND;
 // }
 
@@ -366,9 +538,102 @@
 //   sql_acl.cc, sql_udf.cc, sql_delete.cc, sql_insert.cc and sql_select.cc
 // */
 
+// int ha_nakamori::encode_to_vector()
+// {
+//   char attribute_buffer[1024];
+//   String attribute(attribute_buffer, sizeof(attribute_buffer), &my_charset_bin);
+
+//   my_bitmap_map *org_bitmap = tmp_use_all_columns(table, table->read_set);// カラム情報の読み取りフラグを立てる
+//   vec.clear();  // buffer を初期化
+
+//   for (Field **field = table->field; *field; field++) {
+//     const char *p;
+//     const char *end;
+
+//     (*field)->val_str(&attribute, &attribute);// クエリ文字列の実際の長さを attribute に格納
+//     p = attribute.ptr();// 書き込む文字列の先頭にポインタをセット
+//     end = attribute.length() + p;// 書き込む文字列の終端にポインタをセット
+
+//     //buffer.append('"');
+//     for (; p < end; p++){
+//       if(*p == '\\' || *p == '\n') continue; 
+//       vec.push_back(*p);
+//     }
+//     //buffer.append('"');
+//     vec.push_back(',');
+//   }
+
+//   vec.pop_back();
+//   vec.push_back('\n');
+
+
+//   tmp_restore_column_map(table->read_set, org_bitmap);// 読み取りフラグを寝かせる
+//   return (0);
+// }
+
 // int ha_nakamori::delete_row(const uchar *) {
 //   DBUG_TRACE;
-//   return HA_ERR_WRONG_COMMAND;
+//   int line = 0;  // 行数
+//   bool deletion_is_successful = false;
+//   char arr[100][50];
+//   FILE *f;
+
+//   f = fopen(data_file_name, "r");
+//   if(f == NULL)
+//   {
+//     printf("load error");
+//     return -1;
+//   }
+
+//   for(int i = 0; i < (int)sizeof(arr)/(int)sizeof(arr[0]) && fgets(arr[i], sizeof(arr[i]), f); i++)
+//   {
+//     line++;  // テキストファイルの行数
+//   }
+//   fclose(f);
+
+//   f = fopen(data_file_name, "w");
+//   if(f == NULL)
+//   {
+//     printf("load error");
+//     return -1;
+//   }
+
+//   //encode_query();
+//   encode_to_vector();
+  
+// #ifdef DEBUG_ON
+//   FILE *fp;
+//   fp = fopen("man.txt", "w");
+//   if(fp == NULL)
+//   {
+//     printf("load error");
+//     return -1;
+//   }
+//   // ファイル書き込み
+//   fprintf(fp, "buffer = %s", (char*)&vec[0]);
+//   for(int i = 0; i < line; i++)
+//     fputs(arr[i], fp);
+//   fputs("delete debug end\n", fp);
+//   fclose(fp);
+// #endif
+//   for(int i = 0; i < line; i++)
+//   {
+//     if(primary_key_strcmp(arr[i],(char*)(&vec[0])) == false)
+//     {
+//       fputs(arr[i], f);
+//     }
+//     else
+//     {
+//       deletion_is_successful = true;
+//     }
+//   }
+  
+//   // ファイル閉じる
+//   fclose(f);
+//   if(!deletion_is_successful)
+//     return -1;
+//   stats.records--;
+//   return 0;
 // }
 
 // /**
@@ -459,8 +724,12 @@
 //   sql_update.cc
 // */
 // int ha_nakamori::rnd_init(bool) {
-//   DBUG_TRACE;
-//   return 0;
+//       DBUG_ENTER("ha_nakamori::rnd_init");
+
+//       current_position = 0;
+//       stats.records = 0;
+
+//       DBUG_RETURN(0);
 // }
 
 // int ha_nakamori::rnd_end() {
@@ -483,11 +752,119 @@
 //   filesort.cc, records.cc, sql_handler.cc, sql_select.cc, sql_table.cc and
 //   sql_update.cc
 // */
-// int ha_nakamori::rnd_next(uchar *) {
-//   int rc;
-//   DBUG_TRACE;
-//   rc = HA_ERR_END_OF_FILE;
-//   return rc;
+
+// int ha_nakamori::find_current_row(uchar *buf)
+// {
+//   DBUG_ENTER("ha_nakamori::find_current_row");
+
+//   my_off_t cur_pos= current_position;
+
+//   /* 
+//      We will use this to iterate through the array of 
+//      table field pointers to store the parsed data in the right
+//      place and the right format.
+//    */  
+//   Field** field= table->field;
+
+//   /* How many bytes we have seen so far in this line. */
+//   int bytes_parsed= 0;
+
+//   /* Loop breaker flag. */
+//   int line_read_done= 0;
+
+//   buffer.length(0);
+
+//   /* Avoid asserts in ::store() for columns that are not going to be updated */
+//   my_bitmap_map* org_bitmap= dbug_tmp_use_all_columns(table, table->write_set);
+
+//   /* Initialize the NULL indicator flags in the record. */
+//   memset(buf, 0, table->s->null_bytes);
+
+//   for (; !line_read_done; )
+//   {
+//     uchar linebuf[IO_SIZE];
+
+//     size_t bytes_read= my_pread(data_file, linebuf, sizeof(linebuf), cur_pos, MYF(MY_WME));
+
+//     if (!bytes_read || bytes_read == MY_FILE_ERROR) {
+//       dbug_tmp_restore_column_map(table->write_set, org_bitmap);
+//       DBUG_RETURN(HA_ERR_END_OF_FILE);
+//     }
+
+//     uchar* p= linebuf;
+//     uchar* buf_end= linebuf + bytes_read;
+
+//     for (; p < buf_end; )
+//     {
+//       uchar c= *p;
+//       int end_of_field= 0;
+//       int end_of_line= 0;
+
+//       switch (c)
+//       {
+//         case ',':
+//           end_of_field= 1;
+//           break;
+
+//         case '\r':
+//         case '\n':
+//           end_of_line= 1;
+//           end_of_field= 1;
+//           break;
+
+//         default:
+//           buffer.append(c);
+//           break;
+//       }
+
+//       if (end_of_field && *field) 
+//       {
+//         (*field)->store(buffer.ptr(), buffer.length(), buffer.charset(), CHECK_FIELD_WARN);
+//         field++;
+//         buffer.length(0);
+//       }
+
+//       p++;
+
+//       if (end_of_line)
+//       {
+//         if (c == '\r')
+//           p++;
+//         line_read_done= 1;
+//         break;
+//       }
+//     }
+
+//     bytes_parsed += (p - linebuf);
+//     cur_pos += bytes_read;
+//   }
+
+//   /* 
+//     The parsed line may not have had the values of all of the fields.
+//     Set the remaining fields to their default values.
+//    */ 
+//   for (; *field; field++)
+//   {
+//     (*field)->set_default();
+//   }
+
+//   /* Move the cursor to the next record. */ 
+//   current_position += bytes_parsed;
+
+//   dbug_tmp_restore_column_map(table->write_set, org_bitmap);
+//   DBUG_RETURN(0);
+// }
+
+// int ha_nakamori::rnd_next(uchar *buf) {
+//   DBUG_ENTER("ha_nakamori::rnd_next");
+//   ha_statistic_increment(&System_status_var::ha_read_rnd_next_count);
+
+//   int rc= find_current_row(buf);
+
+//   if (!rc)
+//     stats.records++;
+
+//   DBUG_RETURN(rc);
 // }
 
 // /**
@@ -574,6 +951,8 @@
 // */
 // int ha_nakamori::info(uint) {
 //   DBUG_TRACE;
+//   /* This is a lie, but you don't want the optimizer to see zero or 1 */
+//   if (stats.records < 2) stats.records = 2;
 //   return 0;
 // }
 
@@ -772,43 +1151,34 @@
 
 // int ha_nakamori::create(const char *name, TABLE *, HA_CREATE_INFO *,
 //                        dd::Table *) {
-//   // DBUG_TRACE;
-//   // /*
-//   //   This is not implemented but we want someone to be able to see that it
-//   //   works.
-//   // */
-//   // char name_buff[FN_REFLEN];
-//   // File table_file;
-
-//   // if((table_file = my_create(fn_format(name_buff, name, "", ".CSV",
-//   //         MY_REPLACE_EXT|MY_UNPACK_FILENAME), 0, O_RDWR, MYF(0))) < 0) // テーブルデータファイルの作成
-//   //   DBUG_RETURN(-1);
-//   // if((my_close(table_file, MYF(0))) < 0)
-//   //   DBUG_RETURN(-1);
-
-//   // /*
-//   //   It's just an nakamori of THDVAR_SET() usage below.
-//   // */
-//   // THD *thd = ha_thd();
-//   // char *buf = (char *)my_malloc(PSI_NOT_INSTRUMENTED, SHOW_VAR_FUNC_BUFF_SIZE,
-//   //                               MYF(MY_FAE));
-//   // snprintf(buf, SHOW_VAR_FUNC_BUFF_SIZE, "Last creation '%s'", name);
-//   // THDVAR_SET(thd, last_create_thdvar, buf);
-//   // my_free(buf);
-
-//   // uint count = THDVAR(thd, create_count_thdvar) + 1;
-//   // THDVAR_SET(thd, create_count_thdvar, &count);
-
-//   // return 0;
+//   DBUG_TRACE;
+//   /*
+//     This is not implemented but we want someone to be able to see that it
+//     works.
+//   */
+//   File create_file;
 //   DBUG_ENTER("ha_nakamori::create");
-
-//   File table_file;
-//   if((table_file = my_create(name, 0, O_RDWR, MYF(0))) < 0)　　// テーブルデータファイルの作成
-//     DBUG_RETURN(-1);
-//   if((my_close(table_file, MYF(0))) < 0)
-//     DBUG_RETURN(-1);
-
+//   fn_format(data_file_name, name, "", ha_nakamori_exts[0],
+//               MY_REPLACE_EXT | MY_UNPACK_FILENAME);  
+//   if ((create_file= my_create(data_file_name,0,O_RDWR | O_TRUNC,MYF(MY_WME))) < 0)
+//   DBUG_RETURN(-1);
+//   my_close(create_file,MYF(0));
 //   DBUG_RETURN(0);
+
+//   /*
+//     It's just an nakamori of THDVAR_SET() usage below.
+//   */
+//   THD *thd = ha_thd();
+//   char *buf = (char *)my_malloc(PSI_NOT_INSTRUMENTED, SHOW_VAR_FUNC_BUFF_SIZE,
+//                                 MYF(MY_FAE));
+//   snprintf(buf, SHOW_VAR_FUNC_BUFF_SIZE, "Last creation '%s'", name);
+//   THDVAR_SET(thd, last_create_thdvar, buf);
+//   my_free(buf);
+
+//   uint count = THDVAR(thd, create_count_thdvar) + 1;
+//   THDVAR_SET(thd, create_count_thdvar, &count);
+
+//   return 0;
 // }
 
 // struct st_mysql_storage_engine nakamori_storage_engine = {

@@ -39,12 +39,15 @@
 */
 
 #include <sys/types.h>
+#include <vector>
+#include<string.h>
 
 #include "my_base.h" /* ha_rows */
 #include "my_compiler.h"
 #include "my_inttypes.h"
 #include "sql/handler.h" /* handler */
 #include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
+#include "sql_string.h"
 
 /** @brief
   Nakamori_share is a class that will be shared among all open handlers.
@@ -56,7 +59,6 @@ class Nakamori_share : public Handler_share {
   Nakamori_share();
   ~Nakamori_share() override { thr_lock_delete(&lock); }
   
-  const char *data_file_name; // データファイル名
 };
 
 /** @brief
@@ -65,12 +67,19 @@ class Nakamori_share : public Handler_share {
 class ha_nakamori : public handler {
   THR_LOCK_DATA lock;          ///< MySQL lock
   Nakamori_share *share;        ///< Shared lock info
-  Nakamori_share *get_share(const char *table_name);  ///< Get the share
+  Nakamori_share *get_share();  ///< Get the share
   File data_file;
+  File write_file;
+  char data_file_name[FN_REFLEN]; // stores "file_name.CSV" in ha_nakamori::create by fn_format
+  my_off_t
+      current_position;   /* Current position in the file during a file scan */
+  String buffer;
  public:
   ha_nakamori(handlerton *hton, TABLE_SHARE *table_arg);
   ~ha_nakamori() override = default;
 
+  bool primary_key_strcmp(const char *s1, const char *s2);
+  int encode_query();
   /** @brief
     The name that will be used for display purposes.
    */
@@ -203,6 +212,9 @@ class ha_nakamori : public handler {
     skip it and and MySQL will treat it as not implemented.
   */
   int update_row(const uchar *old_data, uchar *new_data) override;
+  // #ifdef INPLACE_UPDATE  
+  // int update_inplace(const uchar *old_data, uchar *new_data);
+  // #endif
 
   /** @brief
     We implement this in ha_nakamori.cc. It's not an obligatory method;
@@ -251,6 +263,7 @@ class ha_nakamori : public handler {
   */
   int rnd_init(bool scan) override;  // required
   int rnd_end() override;
+  int find_current_row(uchar *buf);
   int rnd_next(uchar *buf) override;             ///< required
   int rnd_pos(uchar *buf, uchar *pos) override;  ///< required
   void position(const uchar *record) override;   ///< required
