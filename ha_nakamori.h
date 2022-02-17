@@ -49,6 +49,8 @@
 #include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
 #include "sql_string.h"
 
+#include <lineairdb/lineairdb.h>
+
 /** @brief
   Nakamori_share is a class that will be shared among all open handlers.
   This nakamori implements the minimum of what you will probably need.
@@ -74,6 +76,7 @@ class ha_nakamori : public handler {
   my_off_t
       current_position;   /* Current position in the file during a file scan */
   String buffer;
+  LineairDB::Database myDB;
  public:
   ha_nakamori(handlerton *hton, TABLE_SHARE *table_arg);
   ~ha_nakamori() override = default;

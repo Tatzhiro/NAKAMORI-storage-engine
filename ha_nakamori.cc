@@ -102,6 +102,7 @@
 #include "sql/table.h"
 #include "sql/field.h"
 
+
 #define INPLACE_UPDATE 
 
 static handler *nakamori_create_handler(handlerton *hton, TABLE_SHARE *table,
@@ -166,7 +167,9 @@ static handler *nakamori_create_handler(handlerton *hton, TABLE_SHARE *table,
 
 ha_nakamori::ha_nakamori(handlerton *hton, TABLE_SHARE *table_arg)
     : handler(hton, table_arg),
-      current_position(0){}
+      current_position(0) {
+        myDB = new LineairDB;
+      }
 
 /*
   List of all system tables specific to the SE.
@@ -336,7 +339,7 @@ int ha_nakamori::write_row(uchar *) {
   }
   int size = encode_query();
   if ((my_write(write_file, pointer_cast<const uchar *> (buffer.ptr()), size, MYF(0))) < 0)// データファイルへの書き込み
-    DBUG_RETURN(-1);  
+    return -1;  
   return 0;
 }
 
