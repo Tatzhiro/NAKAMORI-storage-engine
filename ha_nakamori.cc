@@ -167,9 +167,7 @@ static handler *nakamori_create_handler(handlerton *hton, TABLE_SHARE *table,
 
 ha_nakamori::ha_nakamori(handlerton *hton, TABLE_SHARE *table_arg)
     : handler(hton, table_arg),
-      current_position(0) {
-        myDB = new LineairDB;
-      }
+      current_position(0) {}
 
 /*
   List of all system tables specific to the SE.
